@@ -1,0 +1,72 @@
+"""
+Section 3 - μ-Law Quantization
+-------------------------------
+F(x) = sgn(x) * ln(1+mu|x|)/ln(1+mu),  x in [-1,1], mu=255
+Exact inverse: F^-1(y) = sgn(y) * (1/mu) * ((1+mu)^|y| - 1)
+Chain: compression -> uniform quantization with 2^B levels -> expansion (inverse) -> comparison with x
+"""
+
+import os
+import numpy as np
+from s2_uniform_quant import uniform_quantize, sqnr_db
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+MU = 255.0
+
+
+def mulaw_compress(x, mu=MU):
+    return np.sign(x) * np.log1p(mu * np.abs(x)) / np.log1p(mu)
+
+
+def mulaw_expand(y, mu=MU):
+    """Exact inverse of mu-law compression."""
+    return np.sign(y) * ((1 + mu) ** np.abs(y) - 1) / mu
+
+
+def mulaw_quantize(x, B, mu=MU):
+    """Apply the full companding chain: compress -> quantize -> expand."""
+    y = mulaw_compress(x, mu)
+    yq, idx = uniform_quantize(y, B)     # Uniform quantization on the compressed signal
+    xq = mulaw_expand(yq, mu)            # Expand to return to the original scale
+    return xq, idx
+
+
+def verify_inverse(mu=MU, n=2000):
+    """Check that F and F^-1 are exact inverses of each other."""
+    xs = np.linspace(-1, 1, n)
+    y = mulaw_compress(xs, mu)
+    x_rec = mulaw_expand(y, mu)
+    max_err = np.max(np.abs(xs - x_rec))
+    return max_err
+
+
+def run_mulaw_report(x, fs, out_prefix=BASE_DIR):
+    os.makedirs(f"{out_prefix}/outputs", exist_ok=True)
+    err = verify_inverse()
+    print(f"Maximum inverse error F^-1(F(x)) on [-1,1]: {err:.3e}  (should be ~0)")
+
+    Bs = [8, 4, 2]
+    results = {}
+    for B in Bs:
+        xq, idx = mulaw_quantize(x, B)
+        mse, sqnr = sqnr_db(x, xq)
+        results[B] = dict(xq=xq, mse=mse, sqnr=sqnr)
+        from s1_signal import save_wav_float
+        save_wav_float(f"{out_prefix}/outputs/s3_mulaw_B{B}.wav", xq, fs)
+    return results
+
+
+if __name__ == "__main__":
+    from s1_signal import make_synthetic_speech_like
+    from s2_uniform_quant import run_uniform_report
+
+    x, fs = make_synthetic_speech_like()
+    uni = run_uniform_report(x, fs)
+    mul = run_mulaw_report(x, fs)
+
+    print(f"\n{'B':>3} | {'SQNR Uniform (dB)':>18} | {'SQNR mu-Law (dB)':>17} | {'Difference':>8}")
+    for B in [8, 4, 2]:
+        su = uni[B]['sqnr']
+        sm = mul[B]['sqnr']
+        print(f"{B:>3} | {su:>18.2f} | {sm:>17.2f} | {sm-su:>8.2f}")
