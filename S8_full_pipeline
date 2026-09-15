@@ -1,0 +1,123 @@
+"""
+Section 8 - Final Output of Phase 1
+------------------------------------
+Complete chain connection:
+Audio file -> Quantization (mu-law) -> Bitstream -> Line Coding -> AWGN channel
+-> Matched filter -> Detection -> Audio reconstruction
+
+For several different combinations of B and Eb/N0, the reconstructed audio file is saved.
+Also the simulated BER curve versus Eb/N0 is compared with the theoretical curve Q(sqrt(2Eb/N0)).
+"""
+
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from scipy.special import erfc
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+from s1_signal import make_synthetic_speech_like, save_wav_float
+from s2_uniform_quant import uniform_quantize
+from s3_mulaw import mulaw_compress, mulaw_expand
+from s4_bitstream import indices_to_bits, bits_to_indices
+from s5_linecoding import LINE_CODERS
+from s6_awgn import pulse_energy_per_bit, add_awgn_for_ebn0, EBN0_DB_LIST
+from s7_matched_filter import matched_filter_receive, compute_ber
+
+
+def Q(x):
+    return 0.5 * erfc(x / np.sqrt(2))
+
+
+def full_chain(x, fs, B, ebn0_db, line_code_name="Polar NRZ", sps=8, mu=255.0, seed=None):
+    """Run the complete chain for one combination (B, Eb/N0, line code) and return
+    the reconstructed audio signal + measured BER."""
+    if seed is not None:
+        np.random.seed(seed)
+
+    # --- Transmitter ---
+    y = mulaw_compress(x, mu)
+    yq, idx = uniform_quantize(y, B)
+    bits_tx = indices_to_bits(idx, B)
+
+    Rb = B * fs
+    Tb = 1.0 / Rb
+    fs_sim = Rb * sps
+    A = 1.0
+
+    fn = LINE_CODERS[line_code_name]
+    wf = fn(bits_tx, sps)
+    Eb = pulse_energy_per_bit(line_code_name, A, Tb, sps)
+
+    # --- Channel ---
+    noisy, N0, sigma2 = add_awgn_for_ebn0(wf, Eb, ebn0_db, fs_sim)
+
+    # --- Receiver ---
+    bits_rx, _, _ = matched_filter_receive(noisy, line_code_name, sps, len(bits_tx))
+    ber = compute_ber(bits_tx, bits_rx)
+
+    # --- Audio reconstruction ---
+    idx_rx = bits_to_indices(bits_rx, B)
+    L = 2 ** B
+    step = 2.0 / L
+    yq_rx = -1.0 + (idx_rx.astype(np.float64) + 0.5) * step
+    x_rec = mulaw_expand(yq_rx, mu)
+
+    return x_rec, ber, Rb
+
+
+def ber_vs_ebn0_curve(x, fs, B=8, line_code_name="Polar NRZ", sps=8,
+                       ebn0_list=EBN0_DB_LIST, out_path=None):
+    if out_path is None:
+        out_path = f"{BASE_DIR}/figs/s8_ber_curve.png"
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    ber_sim = []
+    for e in ebn0_list:
+        _, ber, _ = full_chain(x, fs, B, e, line_code_name, sps, seed=123)
+        ber_sim.append(max(ber, 1e-6))  # Prevent log(0) in the plot
+
+    ebn0_lin = 10 ** (np.array(ebn0_list) / 10.0)
+    ber_theory = Q(np.sqrt(2 * ebn0_lin))
+
+    plt.figure(figsize=(7, 5))
+    plt.semilogy(ebn0_list, ber_sim, "o-", label="Simulated BER")
+    plt.semilogy(ebn0_list, ber_theory, "s--", label=r"Theoretical BER $Q(\sqrt{2E_b/N_0})$")
+    plt.xlabel("Eb/N0 (dB)")
+    plt.ylabel("BER")
+    plt.title(f"BER vs Eb/N0 ({line_code_name}, B={B})")
+    plt.grid(True, which="both", alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=130)
+    plt.close()
+
+    return ebn0_list, ber_sim, ber_theory.tolist()
+
+
+if __name__ == "__main__":
+    os.makedirs(f"{BASE_DIR}/outputs", exist_ok=True)
+    os.makedirs(f"{BASE_DIR}/figs", exist_ok=True)
+    x, fs = make_synthetic_speech_like()
+    save_wav_float(f"{BASE_DIR}/outputs/section1_original.wav", x, fs)
+
+    print("Computing BER curve versus Eb/N0 ...")
+    ebn0_list, ber_sim, ber_theory = ber_vs_ebn0_curve(x, fs, B=8, line_code_name="Polar NRZ", sps=8)
+    print(f"{'Eb/N0(dB)':>10} | {'Simulated BER':>15} | {'Theoretical BER':>12}")
+    for e, bs, bt in zip(ebn0_list, ber_sim, ber_theory):
+        print(f"{e:>10} | {bs:>15.5f} | {bt:>12.5e}")
+
+    print("\nGenerating reconstructed audio files for several combinations of B and Eb/N0 ...")
+    combos = [
+        (8, 20, "Polar NRZ"),
+        (8, 5, "Polar NRZ"),
+        (4, 20, "Manchester"),
+        (4, 0, "Manchester"),
+        (8, -5, "Polar RZ"),
+    ]
+    for B, ebn0, lc in combos:
+        x_rec, ber, Rb = full_chain(x, fs, B, ebn0, lc, sps=8, seed=42)
+        fname = f"{BASE_DIR}/outputs/section8_final_B{B}_EbN0_{ebn0}dB_{lc.replace(' ', '')}.wav"
+        save_wav_float(fname, x_rec, fs)
+        print(f"  B={B}, Eb/N0={ebn0}dB, {lc}: BER={ber:.5f}, Rb={Rb}bit/s -> {fname}")
