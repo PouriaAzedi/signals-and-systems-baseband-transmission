@@ -1,0 +1,86 @@
+"""
+Section 4 - Bitstream Generation
+---------------------------------
+Choice: Based on sections 2 and 3, we select the best SQNR with the lowest bit rate.
+Since at B=8 both uniform quantization and mu-law give practically high SQNR (~38 dB)
+and are almost identical, but mu-law is more robust at lower rates, for the next phase
+(transmission over noisy channel) we use mu-law with B=8 so that we have both high quality
+and better behavior against bit errors (due to the perceptual robustness of logarithmic modulation).
+
+Binary encoding: natural binary, MSB first.
+Rb = B * Fs  (bit/sec)
+"""
+
+import numpy as np
+
+
+def indices_to_bits(idx, B):
+    """
+    idx: array of integer indices (0..2^B-1)
+    Output: 1-D array of bits (0/1), MSB first for each sample.
+    """
+    idx = idx.astype(np.uint32)
+    n = len(idx)
+    bits = np.zeros((n, B), dtype=np.uint8)
+    for b in range(B):
+        shift = B - 1 - b
+        bits[:, b] = (idx >> shift) & 1
+    return bits.flatten()
+
+
+def bits_to_indices(bits, B):
+    """Inverse of indices_to_bits: reconstruct integer index from the bitstream."""
+    bits = np.asarray(bits, dtype=np.uint32)
+    n = len(bits) // B
+    bits = bits[: n * B].reshape(n, B)
+    idx = np.zeros(n, dtype=np.uint32)
+    for b in range(B):
+        shift = B - 1 - b
+        idx += bits[:, b].astype(np.uint32) << shift
+    return idx
+
+
+def build_bitstream(x, B=8, mu=255.0):
+    from s3_mulaw import mulaw_compress
+    from s2_uniform_quant import uniform_quantize
+
+    y = mulaw_compress(x, mu)
+    yq, idx = uniform_quantize(y, B)
+    bits = indices_to_bits(idx, B)
+    Rb = B * 16000  # Fs = 16 kHz
+    return bits, idx, Rb
+
+
+def verify_roundtrip(x, B=8, mu=255.0):
+    """Ensure that bits -> indices -> mu-law expand exactly reproduces the quantized signal
+    (full invertibility test)."""
+    from s3_mulaw import mulaw_compress, mulaw_expand
+    from s2_uniform_quant import uniform_quantize
+
+    y = mulaw_compress(x, mu)
+    yq, idx = uniform_quantize(y, B)
+    bits = indices_to_bits(idx, B)
+    idx_rec = bits_to_indices(bits, B)
+    assert np.array_equal(idx, idx_rec), "Error: index reconstruction from bits is wrong!"
+
+    L = 2 ** B
+    step = 2.0 / L
+    yq_rec = -1.0 + (idx_rec + 0.5) * step
+    xq_rec = mulaw_expand(yq_rec, mu)
+    max_diff = np.max(np.abs(xq_rec - mulaw_expand(yq, mu)))
+    return max_diff
+
+
+if __name__ == "__main__":
+    from s1_signal import make_synthetic_speech_like
+
+    x, fs = make_synthetic_speech_like()
+    B = 8
+    bits, idx, Rb = build_bitstream(x, B=B)
+    diff = verify_roundtrip(x, B=B)
+
+    print(f"Number of samples: {len(idx)}")
+    print(f"Bitstream length: {len(bits)} bits (= {len(idx)} × {B})")
+    print(f"Bit rate Rb = B×Fs = {B}×{fs} = {Rb} bit/s")
+    print(f"Round-trip error bits<->indices: {diff:.3e} (should be zero)")
+    print("First 20 bits of the stream:", bits[:20])
