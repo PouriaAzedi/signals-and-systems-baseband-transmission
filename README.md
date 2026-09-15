@@ -1,59 +1,74 @@
-# signals-and-systems-baseband-transmission
-A Python-based baseband digital communication chain using a real voice recording, covering quantization, μ-law companding, line coding, AWGN, matched filtering, and signal reconstruction.
-# Signals & Systems — Baseband Digital Communication Chain
+# Signals & Systems — Baseband Digital Communication
 
-A Python-based implementation of a complete **baseband digital communication chain**, developed as a fourth-semester Signals & Systems course project in Electrical Engineering.
+A Python-based implementation of a complete **baseband digital communication chain**, developed as a fourth-semester **Signals & Systems course project** in Electrical Engineering.
 
-The project starts with a **real self-recorded voice signal** and processes it through quantization, digital encoding, line coding, a noisy AWGN channel, matched-filter reception, and final signal reconstruction.
+The project starts from a **real self-recorded voice signal** and processes it through quantization, μ-law companding, digital bit-stream generation, line coding, an AWGN channel, matched-filter detection, and final audio reconstruction.
 
-## Project Overview
-
-The complete communication pipeline is:
-
-```text
-Voice Recording
-      ↓
-Signal Acquisition & Preprocessing
-      ↓
-Uniform / μ-Law Quantization
-      ↓
-Bit Stream Generation
-      ↓
-Line Coding
-      ↓
-AWGN Channel
-      ↓
-Matched Filtering & Detection
-      ↓
-Signal Reconstruction
-      ↓
-Reconstructed Audio
-```
-
-The main objective is to implement each stage from first principles and evaluate how quantization, coding, channel noise, and receiver design affect the transmitted signal and the final reconstructed audio.
+The main goal is to implement and analyze each stage of the communication system using fundamental signal-processing concepts and Python.
 
 ---
 
-## Features
+## 📡 Communication Pipeline
+
+```text
+Voice Recording
+      │
+      ▼
+Signal Acquisition & Preprocessing
+      │
+      ▼
+Uniform / μ-Law Quantization
+      │
+      ▼
+Bit Stream Generation
+      │
+      ▼
+Line Coding
+      │
+      ▼
+AWGN Channel
+      │
+      ▼
+Matched Filtering & Detection
+      │
+      ▼
+Bit Reconstruction
+      │
+      ▼
+Audio Reconstruction
+```
+
+---
+
+## 🔬 Project Sections
 
 ### 1. Signal Acquisition & Preprocessing
 
-* Real self-recorded voice signal
-* Mono audio processing
+A real voice recording is used as the input signal rather than a synthetic test tone.
+
+The signal is processed to satisfy the required specifications:
+
 * Sampling frequency: **16 kHz**
-* 16-bit PCM input
-* Amplitude normalization to `[-1, 1]`
-* Signal preparation for subsequent processing stages
+* Duration: **12 seconds**
+* Mono audio
+* Amplitude normalized to `[-1, 1]`
+* 16-bit PCM WAV output
+
+The resulting signal contains **192,000 samples** and serves as the reference signal for all subsequent measurements.
+
+---
 
 ### 2. Uniform Quantization
 
-Uniform mid-rise quantization is implemented for:
+A **mid-rise uniform quantizer** is implemented over the range `[-1, 1]`.
 
-* **8-bit**
-* **4-bit**
-* **2-bit**
+Three quantization depths are evaluated:
 
-For each configuration, the project calculates:
+* **8 bits**
+* **4 bits**
+* **2 bits**
+
+For each configuration, the following are calculated:
 
 * Mean Squared Error (MSE)
 * Signal-to-Quantization-Noise Ratio (SQNR)
@@ -61,11 +76,21 @@ For each configuration, the project calculates:
 * Error histogram
 * Reconstructed audio
 
-The measured results are compared with the expected behavior of an ideal quantizer and interpreted in the context of a real speech signal.
+#### Measured Results
+
+| Bits |          MSE |      SQNR |
+| ---: | -----------: | --------: |
+|    8 | 7.199 × 10⁻⁶ |  25.52 dB |
+|    4 | 2.595 × 10⁻³ |  -0.04 dB |
+|    2 | 5.265 × 10⁻² | -13.12 dB |
+
+The results demonstrate how strongly low-resolution quantization affects a real speech signal.
+
+---
 
 ### 3. μ-Law Companding
 
-The project implements μ-law compression and its exact inverse using:
+To improve the representation of low-amplitude components, **μ-law companding** is implemented with:
 
 ```text
 μ = 255
@@ -85,144 +110,260 @@ Uniform Quantization
 Reconstructed Signal
 ```
 
-The performance of μ-law companding is evaluated at 8, 4, and 2 bits and compared against conventional uniform quantization.
+The implementation includes both the compression function and its exact inverse.
 
-This allows the effect of companding on low-amplitude speech components to be investigated.
+The inverse transformation was numerically verified with a maximum reconstruction error of approximately:
+
+```text
+8.88 × 10⁻¹⁶
+```
+
+#### Uniform vs. μ-Law SQNR
+
+| Bits | Uniform SQNR | μ-Law SQNR | Improvement |
+| ---: | -----------: | ---------: | ----------: |
+|    8 |     25.52 dB |   37.72 dB |   +12.20 dB |
+|    4 |     -0.04 dB |   13.47 dB |   +13.51 dB |
+|    2 |    -13.12 dB |   -0.47 dB |   +12.64 dB |
+
+These results show the advantage of companding for the tested voice signal, particularly when the available quantization resolution is limited.
+
+---
 
 ### 4. Bit Stream Generation
 
-Quantized sample indices are converted into a serial binary stream using:
+The quantized sample indices are converted into a serial binary stream using:
 
 * Natural binary coding
 * MSB-first ordering
 * Exact inverse conversion
 
-The implementation includes a round-trip verification to ensure that:
+The bitstream generation process was verified using a complete round-trip test:
 
 ```text
-Sample Indices → Bits → Sample Indices
+Quantized Indices
+       ↓
+     Bits
+       ↓
+Quantized Indices
 ```
 
-produces an exact reconstruction.
-
-For the selected 8-bit configuration with a sampling frequency of 16 kHz:
+The reconstruction error of the round-trip test was:
 
 ```text
-Rb = 128 kbit/s
+0.0
 ```
+
+For the selected **8-bit** configuration and `16 kHz` sampling rate:
+
+```text
+Bit Rate = 128 kbit/s
+```
+
+The resulting voice signal contains:
+
+```text
+1,536,000 bits
+```
+
+---
 
 ### 5. Line Coding
 
-Three polar line-coding schemes are implemented:
+Three polar line-coding techniques are implemented:
 
 * **Polar NRZ**
 * **Polar RZ**
 * **Manchester**
 
-For each coding scheme, the project analyzes:
+For each scheme, the project generates:
 
 * Time-domain waveform
 * Power Spectral Density (PSD)
 * Approximate bandwidth
-* DC component
+* DC-component analysis
 
-The analysis also demonstrates the expected bandwidth relationship between NRZ and RZ signaling and the near-zero DC characteristic of Manchester coding.
+The first 20 bits are visualized in the generated waveform figure, while the PSD is estimated using **Welch's method**.
+
+#### Measured Characteristics
+
+| Line Code  | Approx. Bandwidth |    DC Ratio |
+| ---------- | ----------------: | ----------: |
+| Polar NRZ  |            17 kHz |     0.00962 |
+| Polar RZ   |         128.5 kHz |     0.00437 |
+| Manchester |         128.5 kHz | 5.66 × 10⁻⁷ |
+
+The Manchester implementation exhibits an effectively negligible DC component.
+
+---
 
 ### 6. AWGN Channel
 
-The transmitted line-coded signals are passed through an Additive White Gaussian Noise (AWGN) channel at:
+The line-coded signals are transmitted through an **Additive White Gaussian Noise (AWGN)** channel.
+
+The following `Eb/N0` values are evaluated:
 
 ```text
-Eb/N0 = {-5, 0, 5, 10, 15, 20} dB
+-5, 0, 5, 10, 15, 20 dB
 ```
 
-The bit energy is calculated separately for each line code to ensure that the simulated noise level corresponds correctly to the selected `Eb/N0`.
+The energy per bit is calculated according to the pulse shape of each line code, allowing the noise level to be calibrated independently for:
+
+* Polar NRZ
+* Polar RZ
+* Manchester
+
+This provides a consistent basis for comparing the different signaling schemes.
+
+---
 
 ### 7. Matched Filtering & Detection
 
-A matched filter is implemented using the time-reversed transmit pulse:
+At the receiver, a matched filter is implemented using the time-reversed transmit pulse.
 
-```text
-h(t) = p(Tb - t)
-```
+The received waveform is:
 
-The receiver then:
+1. Convolved with the matched-filter response
+2. Sampled at the optimal decision instant
+3. Detected using a zero threshold
+4. Compared against the transmitted bit sequence
 
-1. Convolves the received signal with the matched-filter response.
-2. Samples at the appropriate decision instant.
-3. Applies a zero-threshold detector.
-4. Calculates the resulting BER.
+The resulting BER is then evaluated over multiple `Eb/N0` values.
 
-The simulated BER is compared with the theoretical binary antipodal signaling performance:
+#### BER Results
 
-```text
-BER = Q(√(2Eb/N0))
-```
+For a representative 8-bit Polar NRZ transmission:
 
-### 8. End-to-End Simulation
+| Eb/N0 | Simulated BER | Theoretical BER |
+| ----: | ------------: | --------------: |
+| -5 dB |       0.21317 |         0.21323 |
+|  0 dB |       0.07895 |         0.07865 |
+|  5 dB |       0.00596 |         0.00595 |
+| 10 dB |   3.26 × 10⁻⁶ |     3.87 × 10⁻⁶ |
+| 15 dB |            ~0 |    9.12 × 10⁻¹⁶ |
+| 20 dB |            ~0 |    1.04 × 10⁻⁴⁵ |
 
-All blocks are connected into a single communication pipeline:
-
-```text
-Audio → Quantization → Bits → Line Coding
-      → AWGN → Matched Filter → Detection
-      → Reconstructed Audio
-```
-
-Multiple combinations of quantization depth, line coding, and `Eb/N0` can be evaluated.
-
-The resulting `.wav` files allow the effect of transmission quality to be evaluated not only numerically, but also by listening to the reconstructed speech.
+The simulated BER closely follows the theoretical binary antipodal signaling curve over the practical simulation range.
 
 ---
 
-## Repository Structure
+## 🔗 End-to-End Simulation
+
+All implemented blocks are finally connected into a single end-to-end communication system:
 
 ```text
-.
+Voice
+  ↓
+μ-Law Companding
+  ↓
+Quantization
+  ↓
+Binary Encoding
+  ↓
+Line Coding
+  ↓
+AWGN Channel
+  ↓
+Matched Filter
+  ↓
+Bit Detection
+  ↓
+Bit-to-Index Reconstruction
+  ↓
+μ-Law Expansion
+  ↓
+Reconstructed Voice
+```
+
+Several combinations of quantization depth, `Eb/N0`, and line-coding technique are evaluated.
+
+### Example Configurations
+
+| Quantization | Eb/N0 | Line Code  |     BER |
+| -----------: | ----: | ---------- | ------: |
+|        8-bit | 20 dB | Polar NRZ  |       0 |
+|        8-bit |  5 dB | Polar NRZ  | 0.00596 |
+|        4-bit | 20 dB | Manchester |       0 |
+|        4-bit |  0 dB | Manchester | 0.07852 |
+|        8-bit | -5 dB | Polar RZ   | 0.21319 |
+|        2-bit | 20 dB | Polar NRZ  |       0 |
+
+The reconstructed WAV files allow the effect of quantization and channel noise to be evaluated both numerically and perceptually.
+
+---
+
+## 📊 Generated Results
+
+The repository contains several generated visualizations, including:
+
+* Uniform quantization error histograms
+* Line-coding waveforms
+* Power Spectral Density comparison
+* Simulated vs. theoretical BER curve
+
+Located in:
+
+```text
+figs/
+```
+
+The generated audio files and numerical report are stored in:
+
+```text
+outputs/
+```
+
+---
+
+## 📁 Repository Structure
+
+```text
+Voiceproject/
+│
 ├── README.md
-├── src/
-│   ├── quantization.py
-│   ├── mulaw.py
-│   ├── bitstream.py
-│   ├── line_coding.py
-│   ├── awgn.py
-│   ├── matched_filter.py
-│   └── pipeline.py
+│
+├── main.py
+├── newfile.py
+│
+├── s1_signal.py
+├── s2_uniform_quant.py
+├── s3_mulaw.py
+├── s4_bitstream.py
+├── s5_linecoding.py
+├── s6_awgn.py
+├── s7_matched_filter.py
+├── s8_full_pipeline.py
 │
 ├── figs/
-│   ├── quantization/
-│   ├── line_coding/
-│   └── ber/
+│   ├── s2_hist_B2.png
+│   ├── s2_hist_B4.png
+│   ├── s2_hist_B8.png
+│   ├── s5_waveforms.png
+│   ├── s5_psd.png
+│   └── s8_ber_curve.png
 │
-├── outputs/
-│   ├── quantized/
-│   └── reconstructed/
-│
-├── requirements.txt
-└── .gitignore
+└── outputs/
+    ├── report_data.json
+    ├── section1_original.wav
+    ├── s2_uniform_B2.wav
+    ├── s2_uniform_B4.wav
+    ├── s2_uniform_B8.wav
+    ├── s3_mulaw_B2.wav
+    ├── s3_mulaw_B4.wav
+    ├── s3_mulaw_B8.wav
+    └── section8_final_*.wav
 ```
-
-> The exact file structure may vary depending on the organization of the source code.
 
 ---
 
-## Requirements
+## 🛠️ Technologies
 
-The project uses Python with the following libraries:
+* **Python**
+* **NumPy**
+* **SciPy**
+* **Matplotlib**
 
-```text
-numpy
-scipy
-matplotlib
-```
-
-Install the dependencies with:
-
-```bash
-pip install -r requirements.txt
-```
-
-or:
+Install the required dependencies with:
 
 ```bash
 pip install numpy scipy matplotlib
@@ -232,42 +373,46 @@ No dedicated communications toolbox is required. The main signal-processing and 
 
 ---
 
-## Why a Real Voice Signal?
+## ▶️ Running the Project
 
-Unlike an ideal sinusoidal test signal, real speech contains:
+Clone the repository and install the required packages:
 
-* Silence and pauses
-* Breathing noise
-* Low-amplitude components
-* Strong amplitude variations
-* Different distributions of vowels and consonants
+```bash
+pip install numpy scipy matplotlib
+```
 
-These characteristics make the recording useful for studying the practical behavior of quantization and digital transmission.
+Then run the main project script:
 
-In particular, they help demonstrate why the performance of a real speech signal can differ from simplified theoretical quantization estimates and why μ-law companding becomes particularly useful at lower bit depths.
+```bash
+python newfile.py
+```
 
----
-
-## Results & Visualization
-
-The project generates visualizations including:
-
-* Quantization error histograms
-* Original and reconstructed signals
-* Line-coded waveforms
-* Power Spectral Density plots
-* BER versus `Eb/N0`
-* Simulated versus theoretical BER
-
-The generated audio outputs can also be used to directly compare the perceptual effect of different quantization and channel conditions.
+The program performs the complete sequence of Sections 1–8 and generates the corresponding figures, reconstructed audio files, BER results, and numerical report.
 
 ---
 
-## Phase 2
+## 🎯 Key Takeaways
+
+This project demonstrates a complete baseband digital communication workflow while connecting theoretical Signals & Systems concepts to practical simulation.
+
+The main observations include:
+
+* Real speech behaves differently from idealized theoretical signals.
+* Increasing quantization resolution significantly improves reconstruction quality.
+* μ-law companding substantially improves SQNR for the tested voice signal.
+* Different line codes produce significantly different spectral characteristics.
+* Manchester signaling provides an effectively negligible DC component.
+* Proper `Eb/N0` calibration must account for the pulse shape of each line code.
+* Matched filtering enables reliable symbol detection in the presence of AWGN.
+* Simulated BER closely follows the theoretical performance at moderate-to-high `Eb/N0`.
+
+---
+
+## 🚀 Future Work — Phase 2
 
 This repository represents **Phase 1** of the project.
 
-Phase 2 extends the system toward a complete digital modem, including:
+The next phase extends the system toward a complete digital modem, including:
 
 * BPSK
 * QPSK
@@ -275,25 +420,26 @@ Phase 2 extends the system toward a complete digital modem, including:
 * 64-QAM
 * Pulse shaping
 * Multipath channel modeling
-* Carrier frequency and phase offsets
+* Carrier frequency offset
+* Carrier phase offset
 * AWGN
 * Carrier recovery
 * Digital receiver processing
 
-The bit stream generated in Phase 1 serves as the input to the modulation stage.
+The bitstream generated in this phase can serve as the input to the modulation and modem chain developed in Phase 2.
 
 ---
 
-## Course Context
+## 🎓 Academic Context
 
 **Course:** Signals & Systems
 **Program:** Electrical Engineering
 **Semester:** 4th Semester
-**Language:** Python
+**Programming Language:** Python
 
 ---
 
-## Author
+## 👤 Author
 
 **Pouria Azedi**
 
@@ -302,6 +448,6 @@ Shahid Beheshti University
 
 ---
 
-## Keywords
+## 📌 Keywords
 
-`Python` `Signals and Systems` `Digital Communications` `Signal Processing` `Baseband Transmission` `Quantization` `μ-Law` `Line Coding` `AWGN` `Matched Filter` `BER`
+`Python` `Signals and Systems` `Digital Communications` `Signal Processing` `Baseband Transmission` `Quantization` `μ-Law` `Line Coding` `AWGN` `Matched Filter` `BER` `Electrical Engineering`
