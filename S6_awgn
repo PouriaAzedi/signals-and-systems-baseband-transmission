@@ -1,0 +1,71 @@
+"""
+Section 6 - AWGN Channel
+-------------------------
+Pass the line-coded signal through an AWGN channel.
+For each Eb/N0 in {-5,0,5,10,15,20} dB, Eb and N0 are calculated separately
+based on the pulse shape and bit rate of each line code (because the energy of each pulse differs with the pulse shape).
+"""
+
+import numpy as np
+
+EBN0_DB_LIST = [-5, 0, 5, 10, 15, 20]
+
+
+def pulse_energy_per_bit(name, A, Tb, sps):
+    """
+    Average energy per bit Eb for each line code (with amplitude A and bit duration Tb):
+      - Polar NRZ  : rectangular pulse of amplitude A over the whole Tb          -> Eb = A^2 * Tb
+      - Polar RZ   : rectangular pulse of amplitude A only over Tb/2             -> Eb = A^2 * Tb/2
+      - Manchester : two half-pulses of amplitude A each of length Tb/2          -> Eb = A^2 * Tb/2 + A^2 * Tb/2 = A^2 * Tb
+    (These values are analytical; a numerical computation option is also provided for verification.)
+    """
+    if name == "Polar NRZ":
+        return A ** 2 * Tb
+    elif name == "Polar RZ":
+        return A ** 2 * (Tb / 2)
+    elif name == "Manchester":
+        return A ** 2 * Tb  # two half-pulses each (Tb/2) with power A^2
+    else:
+        raise ValueError(name)
+
+
+def add_awgn_for_ebn0(wf, Eb, ebn0_db, fs_sim):
+    """
+    Knowing Eb (Joules per bit) and Eb/N0 (dB), we find N0, then set the discrete noise variance
+    proportional to the simulation sampling frequency (fs_sim):
+        N0 = Eb / (10^(ebn0_db/10))
+        continuous two-sided noise power = N0/2 (density)  ->  discrete sample variance:
+        sigma^2 = N0/2 * fs_sim   (because discrete white noise with sample spacing Ts=1/fs_sim
+        approximates preserving the continuous spectral density N0/2)
+    """
+    ebn0_lin = 10 ** (ebn0_db / 10.0)
+    N0 = Eb / ebn0_lin
+    sigma2 = N0 / 2.0 * fs_sim
+    noise = np.random.normal(0, np.sqrt(sigma2), size=len(wf))
+    return wf + noise, N0, sigma2
+
+
+if __name__ == "__main__":
+    from s1_signal import make_synthetic_speech_like
+    from s4_bitstream import build_bitstream
+    from s5_linecoding import LINE_CODERS
+
+    x, fs = make_synthetic_speech_like()
+    bits, idx, Rb = build_bitstream(x, B=8)
+    Tb = 1.0 / Rb
+    sps = 16
+    fs_sim = Rb * sps
+    A = 1.0
+
+    bsub = bits[:2000]
+
+    print(f"{'Line code':>12} | {'Eb (J)':>12} | " +
+          " | ".join(f"N0@{e}dB" for e in EBN0_DB_LIST))
+    for name, fn in LINE_CODERS.items():
+        wf = fn(bsub, sps)
+        Eb = pulse_energy_per_bit(name, A, Tb, sps)
+        n0_list = []
+        for ebn0 in EBN0_DB_LIST:
+            noisy, N0, sigma2 = add_awgn_for_ebn0(wf, Eb, ebn0, fs_sim)
+            n0_list.append(f"{N0:.2e}")
+        print(f"{name:>12} | {Eb:.4e} | " + " | ".join(n0_list))
