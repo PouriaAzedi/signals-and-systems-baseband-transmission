@@ -1,0 +1,153 @@
+"""
+Section 5 - Line Coding
+------------------------
+Three methods: Polar NRZ, Polar RZ, Manchester
+For each method: waveform of the first 20 bits, estimated PSD (Welch), approximate bandwidth
+(first spectral zero or -3dB) and DC component check.
+"""
+
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from scipy.signal import welch
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+A = 1.0  # Pulse amplitude
+
+
+def polar_nrz(bits, sps):
+    """Polar NRZ: bit 1 -> +A for the whole Tb, bit 0 -> -A for the whole Tb."""
+    levels = np.where(bits == 1, A, -A)
+    return np.repeat(levels, sps)
+
+
+def polar_rz(bits, sps):
+    """Polar RZ: like NRZ but returns to 0 in the second half of the bit."""
+    levels = np.where(bits == 1, A, -A)
+    half = sps // 2
+    wf = np.zeros(len(bits) * sps)
+    for i, lv in enumerate(levels):
+        wf[i * sps: i * sps + half] = lv
+        # Second half remains zero
+    return wf
+
+
+def manchester(bits, sps):
+    """Manchester: bit 1 -> +A then -A, bit 0 -> -A then +A (half and half)."""
+    half = sps // 2
+    wf = np.zeros(len(bits) * sps)
+    for i, b in enumerate(bits):
+        if b == 1:
+            wf[i * sps: i * sps + half] = A
+            wf[i * sps + half: (i + 1) * sps] = -A
+        else:
+            wf[i * sps: i * sps + half] = -A
+            wf[i * sps + half: (i + 1) * sps] = A
+    return wf
+
+
+LINE_CODERS = {
+    "Polar NRZ": polar_nrz,
+    "Polar RZ": polar_rz,
+    "Manchester": manchester,
+}
+
+
+def plot_waveforms(bits20, sps, Tb, out_path):
+    t = np.arange(20 * sps) / sps * Tb / (Tb)  # Normalized time in samples, real scale applied separately
+    fig, axes = plt.subplots(3, 1, figsize=(9, 7), sharex=True)
+    for ax, (name, fn) in zip(axes, LINE_CODERS.items()):
+        wf = fn(bits20, sps)
+        tt = np.arange(len(wf)) / sps * Tb  # Real time in seconds
+        ax.step(tt * 1e6, wf, where="post")  # Microseconds for readability because Tb is small
+        ax.set_ylabel(name)
+        ax.set_ylim(-1.5, 1.5)
+        ax.grid(alpha=0.3)
+        # Guide lines for bit boundaries
+        for k in range(21):
+            ax.axvline(k * Tb * 1e6, color="gray", lw=0.4, alpha=0.5)
+    axes[-1].set_xlabel("Time (µs)")
+    fig.suptitle("Waveform of the first 20 bits for the three Line Coding methods")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=130)
+    plt.close()
+
+
+def bandwidth_from_psd(f, Pxx, dc_frac_thresh=0.02):
+    """
+    Bandwidth estimate: first frequency (>0) where PSD reaches the -3dB level (half power)
+    relative to the main peak (if the spectrum has no absolute zero), or the first real spectral zero.
+    Also checks whether the DC component (at f=0) is significant or not.
+    """
+    Pxx = Pxx.copy()
+    peak = Pxx[1:].max()  # Ignore f=0 to find the main non-DC peak
+    half_power = peak / 2.0
+    # First frequency after the peak that falls below half power
+    idx_peak = np.argmax(Pxx[1:]) + 1
+    bw_freq = None
+    for i in range(idx_peak, len(Pxx)):
+        if Pxx[i] <= half_power:
+            bw_freq = f[i]
+            break
+    dc_power = Pxx[0]
+    dc_ratio = dc_power / (np.sum(Pxx) + 1e-30)
+    has_dc = dc_ratio > dc_frac_thresh
+    return bw_freq, dc_ratio, has_dc
+
+
+def run_linecoding_report(bits, Rb, out_prefix=BASE_DIR, sps=16):
+    """
+    bits: full bitstream (only a portion is used for longer PSD so the spectrum estimate
+          is more stable; for waveform plotting only the first 20 bits are used).
+    Rb: bit rate (bit/s) -> Tb = 1/Rb
+    sps: samples per bit for discrete pulse simulation (simulation sampling frequency = Rb*sps)
+    """
+    os.makedirs(f"{out_prefix}/figs", exist_ok=True)
+    Tb = 1.0 / Rb
+    fs_sim = Rb * sps  # Simulation sampling frequency (much higher than Rb for spectral resolution)
+
+    plot_waveforms(bits[:20], sps, Tb, f"{out_prefix}/figs/s5_waveforms.png")
+
+    # For PSD we use more bits (several thousand) so the estimate variance is low
+    n_bits_psd = min(20000, len(bits))
+    bsub = bits[:n_bits_psd]
+
+    report = {}
+    plt.figure(figsize=(8, 5))
+    for name, fn in LINE_CODERS.items():
+        wf = fn(bsub, sps)
+        f, Pxx = welch(wf, fs=fs_sim, nperseg=4096)
+        bw, dc_ratio, has_dc = bandwidth_from_psd(f, Pxx)
+        report[name] = dict(bw_hz=bw, dc_ratio=dc_ratio, has_dc=has_dc)
+        plt.semilogy(f / Rb, Pxx / Pxx.max(), label=name)  # x-axis normalized to Rb
+
+    plt.xlim(0, 3)
+    plt.xlabel("f / Rb")
+    plt.ylabel("Normalized PSD (log scale)")
+    plt.title("Power Spectral Density (Welch) for the three Line Coding methods")
+    plt.legend()
+    plt.grid(alpha=0.3, which="both")
+    plt.tight_layout()
+    plt.savefig(f"{out_prefix}/figs/s5_psd.png", dpi=130)
+    plt.close()
+
+    return report, Tb
+
+
+if __name__ == "__main__":
+    from s1_signal import make_synthetic_speech_like
+    from s4_bitstream import build_bitstream
+
+    x, fs = make_synthetic_speech_like()
+    bits, idx, Rb = build_bitstream(x, B=8)
+    report, Tb = run_linecoding_report(bits, Rb)
+
+    print(f"Rb = {Rb} bit/s ,  Tb = {Tb*1e6:.3f} µs")
+    print(f"\n{'Method':>12} | {'Bandwidth (~-3dB, Hz)':>22} | {'DC power ratio':>13} | {'Significant DC?'}")
+    for name, r in report.items():
+        bw = r['bw_hz']
+        bw_str = f"{bw:.1f}" if bw is not None else "Not found"
+        print(f"{name:>12} | {bw_str:>22} | {r['dc_ratio']:.4f}      | {'Yes' if r['has_dc'] else 'No'}")
