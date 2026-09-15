@@ -1,0 +1,96 @@
+"""
+Section 1 - Baseband Transmission: Audio Signal Preparation
+------------------------------------------------------------
+If you have a real audio file:
+    Use the function load_real_audio(path) instead of make_synthetic_speech_like().
+    Just provide the path to your wav file (mono, speech 10-20 seconds).
+
+Here, because a real file was not available, we generate a synthetic "speech-like" signal:
+sum of several formant-like frequencies + time-varying amplitude envelope similar to speech syllables +
+a little weak white noise, exactly with the requested specifications (Fs=16kHz, 16-bit PCM, [-1,1]).
+"""
+
+import os
+import numpy as np
+from scipy.io import wavfile
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+FS = 16000          # Required sampling rate
+DURATION = 12.0     # seconds (between 10 and 20)
+
+
+def load_real_audio(path, target_fs=FS, duration=DURATION):
+    """Use this function if the user has a real audio file."""
+    from scipy.io import wavfile
+    import scipy.signal as sps
+
+    fs_in, x = wavfile.read(path)
+    x = x.astype(np.float64)
+    if x.ndim > 1:
+        x = x.mean(axis=1)  # Convert to mono
+
+    # Normalize based on original data type
+    if np.max(np.abs(x)) > 0:
+        x = x / np.max(np.abs(x))
+
+    if fs_in != target_fs:
+        n_new = int(len(x) * target_fs / fs_in)
+        x = sps.resample(x, n_new)
+
+    max_len = int(duration * target_fs)
+    if len(x) > max_len:
+        x = x[:max_len]
+
+    x = x / (np.max(np.abs(x)) + 1e-12)
+    return x, target_fs
+
+
+def make_synthetic_speech_like(fs=FS, duration=DURATION, seed=7):
+    """Synthetic speech-like signal with time-varying amplitude envelope (silence/syllable)."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(int(fs * duration)) / fs
+    n = len(t)
+
+    # Several "syllables" with different fundamental frequencies and formants that follow each other
+    x = np.zeros(n)
+    n_syll = 14
+    syll_len = n // n_syll
+    for i in range(n_syll):
+        i0, i1 = i * syll_len, min((i + 1) * syll_len, n)
+        seg_t = t[i0:i1] - t[i0]
+        f0 = rng.uniform(90, 200)          # Fundamental frequency of the voice
+        formants = rng.uniform(400, 3000, size=3)
+        amps = rng.uniform(0.3, 1.0, size=3)
+        seg = np.zeros_like(seg_t)
+        for f, a in zip(formants, amps):
+            seg += a * np.sin(2 * np.pi * f * seg_t + rng.uniform(0, 2 * np.pi))
+        seg += 0.6 * np.sin(2 * np.pi * f0 * seg_t)
+
+        # Amplitude envelope (attack-decay) similar to syllable pronunciation, with silence between syllables
+        env = np.hanning(len(seg_t) * 2)[:len(seg_t)]
+        if rng.uniform() < 0.15:  # Sometimes complete silence between words
+            env *= 0.02
+        x[i0:i1] = seg * env
+
+    # A little weak white noise (similar to microphone noise)
+    x += rng.normal(0, 0.01, size=n)
+
+    # Exact normalization to the range [-1, 1]
+    x = x / (np.max(np.abs(x)) + 1e-12)
+    return x, fs
+
+
+def save_wav_float(path, x, fs):
+    """Save float signal in [-1,1] as 16-bit PCM wav."""
+    x_clipped = np.clip(x, -1.0, 1.0)
+    x16 = np.round(x_clipped * 32767).astype(np.int16)
+    wavfile.write(path, fs, x16)
+
+
+if __name__ == "__main__":
+    x, fs = make_synthetic_speech_like()
+    print(f"len={len(x)} samples, duration={len(x)/fs:.2f}s, fs={fs}, "
+          f"min={x.min():.3f}, max={x.max():.3f}")
+    os.makedirs(f"{BASE_DIR}/outputs", exist_ok=True)
+    save_wav_float(f"{BASE_DIR}/outputs/section1_original.wav", x, fs)
