@@ -1,0 +1,76 @@
+"""
+Section 7 - Matched Filter and Detection
+-----------------------------------------
+h(t) = p(Tb - t)  (matched filter impulse response = time-reversed pulse p(t))
+Implemented as discrete convolution + sampling at the optimal time t = Tb
+(after each bit) + threshold decision (>0 -> bit 1, <0 -> bit 0) for polar signals (zero mean).
+"""
+
+import numpy as np
+
+
+def get_pulse_shape(name, sps, A=1.0):
+    """Base pulse shape p(t) for one bit (length sps samples)."""
+    if name == "Polar NRZ":
+        return np.ones(sps) * A
+    elif name == "Polar RZ":
+        p = np.zeros(sps)
+        p[: sps // 2] = A
+        return p
+    elif name == "Manchester":
+        p = np.zeros(sps)
+        p[: sps // 2] = A
+        p[sps // 2:] = -A
+        return p
+    else:
+        raise ValueError(name)
+
+
+def matched_filter_receive(rx_wf, name, sps, n_bits):
+    """
+    Matched filter h(t)=p(Tb-t) is implemented via discrete convolution.
+    Then sampling is performed at the optimal instant (end of each bit interval,
+    equivalent to t=Tb from the start of each pulse after convolution)
+    and zero-threshold decision is applied.
+    """
+    p = get_pulse_shape(name, sps)
+    h = p[::-1]  # h(t) = p(Tb - t)  <=>  time-reversed pulse
+    y = np.convolve(rx_wf, h, mode="full")
+
+    # Peak of the matched filter output for each pulse occurs at the end of the convolution interval
+    # with delay (len(p)-1) for the start of each bit; sampling at t = Tb from the start of each bit:
+    sample_idx = np.arange(n_bits) * sps + (sps - 1)
+    samples = y[sample_idx]
+
+    bits_hat = (samples > 0).astype(np.uint8)
+    return bits_hat, y, sample_idx
+
+
+def compute_ber(bits_tx, bits_rx):
+    n = min(len(bits_tx), len(bits_rx))
+    return np.mean(bits_tx[:n] != bits_rx[:n])
+
+
+if __name__ == "__main__":
+    from s1_signal import make_synthetic_speech_like
+    from s4_bitstream import build_bitstream
+    from s5_linecoding import LINE_CODERS
+    from s6_awgn import pulse_energy_per_bit, add_awgn_for_ebn0
+
+    x, fs = make_synthetic_speech_like()
+    bits, idx, Rb = build_bitstream(x, B=8)
+    Tb = 1.0 / Rb
+    sps = 16
+    fs_sim = Rb * sps
+    A = 1.0
+
+    bsub = bits[:5000]
+    ebn0_test = 5  # dB for a quick test
+
+    for name, fn in LINE_CODERS.items():
+        wf = fn(bsub, sps)
+        Eb = pulse_energy_per_bit(name, A, Tb, sps)
+        noisy, N0, sigma2 = add_awgn_for_ebn0(wf, Eb, ebn0_test, fs_sim)
+        bits_hat, y, sidx = matched_filter_receive(noisy, name, sps, len(bsub))
+        ber = compute_ber(bsub, bits_hat)
+        print(f"{name:>12} @ Eb/N0={ebn0_test}dB -> Simulated BER = {ber:.5f}")
