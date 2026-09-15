@@ -1,0 +1,143 @@
+"""
+Main script of Phase 1 of the Signal and Systems project
+----------------------------------------------------------
+Runs all sections 1 to 8 completely and produces the final report + all plots and audio files.
+
+How to use with your own real audio file:
+    In the bottom part (section 'Input signal selection'), uncomment the line related to load_real_audio
+    and enter the path to your own wav file.
+"""
+
+import os
+import numpy as np
+import json
+
+from s1_signal import make_synthetic_speech_like, load_real_audio, save_wav_float, FS
+from s2_uniform_quant import run_uniform_report
+from s3_mulaw import run_mulaw_report, verify_inverse
+from s4_bitstream import build_bitstream, verify_roundtrip
+from s5_linecoding import run_linecoding_report
+from s6_awgn import pulse_energy_per_bit, EBN0_DB_LIST
+from s8_full_pipeline import ber_vs_ebn0_curve, full_chain
+
+# Project path: the same folder where main.py is located (works correctly on phone/any system)
+BASE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.join(BASE, "outputs")
+FIG = os.path.join(BASE, "figs")
+os.makedirs(OUT, exist_ok=True)
+os.makedirs(FIG, exist_ok=True)
+
+# Name of your real audio file (must be placed next to main.py in the same folder)
+AUDIO_FILE = os.path.join(BASE, "VoiceVoiceVoice.wav")
+
+
+def main():
+    report = {}
+
+    # ============ Section 1: Input signal selection ============
+    # We use your real audio file (VoiceVoiceVoice.wav).
+    # If the file is not found, we automatically fall back to the synthetic signal so the program does not crash.
+    if os.path.exists(AUDIO_FILE):
+        x, fs = load_real_audio(AUDIO_FILE)
+        print(f"[Section 1] Real audio file loaded: {AUDIO_FILE}")
+    else:
+        print(f"[Warning] File {AUDIO_FILE} not found; using synthetic signal.")
+        x, fs = make_synthetic_speech_like()
+    save_wav_float(f"{OUT}/section1_original.wav", x, fs)
+    report["section1"] = {"n_samples": len(x), "duration_s": len(x) / fs, "fs": fs}
+    print(f"[Section 1] {len(x)} samples, {len(x)/fs:.2f}s @ {fs}Hz  -> saved section1_original.wav")
+
+    # ============ Section 2: Uniform quantization ============
+    uni_res = run_uniform_report(x, fs, out_prefix=BASE)
+    report["section2_uniform"] = {B: {"mse": r["mse"], "sqnr_db": r["sqnr"]} for B, r in uni_res.items()}
+    print("[Section 2] Uniform quantization:")
+    for B, r in uni_res.items():
+        print(f"    B={B}: MSE={r['mse']:.4e}, SQNR={r['sqnr']:.2f} dB")
+
+    # ============ Section 3: μ-Law ============
+    inv_err = verify_inverse()
+    mul_res = run_mulaw_report(x, fs, out_prefix=BASE)
+    report["section3_mulaw"] = {B: {"mse": r["mse"], "sqnr_db": r["sqnr"]} for B, r in mul_res.items()}
+    report["section3_inverse_check_max_err"] = float(inv_err)
+    print(f"[Section 3] Inverse check F^-1(F(x)): maximum error = {inv_err:.2e}")
+    print(f"{'B':>3} | {'SQNR Uniform':>13} | {'SQNR mu-Law':>12} | {'Difference (dB)':>14}")
+    for B in [8, 4, 2]:
+        su, sm = uni_res[B]["sqnr"], mul_res[B]["sqnr"]
+        print(f"{B:>3} | {su:>13.2f} | {sm:>12.2f} | {sm - su:>14.2f}")
+
+    # ============ Section 4: Bitstream ============
+    B_chosen = 8  # Best quality; mu-law is also more robust at lower B (Section 3)
+    bits, idx, Rb = build_bitstream(x, B=B_chosen)
+    rt_err = verify_roundtrip(x, B=B_chosen)
+    report["section4"] = {"B_chosen": B_chosen, "Rb_bps": Rb, "n_bits": len(bits),
+                           "roundtrip_error": float(rt_err)}
+    print(f"[Section 4] Chosen B={B_chosen} (mu-law) -> Rb={Rb} bit/s, "
+          f"{len(bits)} total bits. Round-trip error={rt_err:.2e}")
+
+    # ============ Section 5: Line Coding ============
+    lc_report, Tb = run_linecoding_report(bits, Rb, out_prefix=BASE)
+    report["section5"] = {name: {"bandwidth_hz": r["bw_hz"], "dc_ratio": r["dc_ratio"],
+                                  "has_dc": bool(r["has_dc"])} for name, r in lc_report.items()}
+    print(f"[Section 5] Tb={Tb*1e6:.3f} µs")
+    for name, r in lc_report.items():
+        bw = r["bw_hz"]
+        print(f"    {name}: BW≈{bw:.0f} Hz, DC power ratio={r['dc_ratio']:.4f}, "
+              f"Significant DC={'Yes' if r['has_dc'] else 'No'}")
+
+    # ============ Sections 6 & 7: AWGN channel + matched filter (quick sample) ============
+    from s5_linecoding import LINE_CODERS
+    from s6_awgn import add_awgn_for_ebn0
+    from s7_matched_filter import matched_filter_receive, compute_ber
+
+    sps = 8
+    fs_sim = Rb * sps
+    A = 1.0
+    bsub = bits[:5000]
+    section67 = {}
+    for name, fn in LINE_CODERS.items():
+        wf = fn(bsub, sps)
+        Eb = pulse_energy_per_bit(name, A, Tb, sps)
+        section67[name] = {}
+        for ebn0 in EBN0_DB_LIST:
+            noisy, N0, sigma2 = add_awgn_for_ebn0(wf, Eb, ebn0, fs_sim)
+            bits_hat, _, _ = matched_filter_receive(noisy, name, sps, len(bsub))
+            ber = compute_ber(bsub, bits_hat)
+            section67[name][ebn0] = float(ber)
+    report["section6_7_ber_table"] = section67
+    print("[Sections 6-7] BER table (5000 sample bits) for each line code and each Eb/N0:")
+    print(f"{'Line code':>12} | " + " | ".join(f"{e:>6}dB" for e in EBN0_DB_LIST))
+    for name, d in section67.items():
+        print(f"{name:>12} | " + " | ".join(f"{d[e]:>8.4f}" for e in EBN0_DB_LIST))
+
+    # ============ Section 8: Full chain + BER curve + final files ============
+    ebn0_list, ber_sim, ber_theory = ber_vs_ebn0_curve(
+        x, fs, B=8, line_code_name="Polar NRZ", sps=sps, out_path=f"{FIG}/s8_ber_curve.png"
+    )
+    report["section8_ber_curve"] = {"ebn0_db": ebn0_list, "ber_sim": ber_sim, "ber_theory": ber_theory}
+    print("[Section 8] Simulated vs theoretical BER curve saved (s8_ber_curve.png)")
+
+    combos = [
+        (8, 20, "Polar NRZ"),
+        (8, 5, "Polar NRZ"),
+        (4, 20, "Manchester"),
+        (4, 0, "Manchester"),
+        (8, -5, "Polar RZ"),
+        (2, 20, "Polar NRZ"),
+    ]
+    report["section8_final_files"] = []
+    for B, ebn0, lc in combos:
+        x_rec, ber, Rb_c = full_chain(x, fs, B, ebn0, lc, sps=sps, seed=42)
+        fname = f"section8_final_B{B}_EbN0_{ebn0}dB_{lc.replace(' ', '')}.wav"
+        save_wav_float(f"{OUT}/{fname}", x_rec, fs)
+        report["section8_final_files"].append({"B": B, "ebn0_db": ebn0, "line_code": lc,
+                                                 "ber": float(ber), "file": fname})
+        print(f"    B={B}, Eb/N0={ebn0}dB, {lc}: BER={ber:.5f} -> {fname}")
+
+    with open(f"{OUT}/report_data.json", "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2, default=str)
+
+    print("\nAll sections completed successfully. Full report saved to report_data.json.")
+
+
+if __name__ == "__main__":
+    main()
