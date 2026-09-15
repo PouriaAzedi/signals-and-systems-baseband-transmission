@@ -1,0 +1,75 @@
+"""
+Section 2 - Uniform Quantization
+---------------------------------
+For B in {8,4,2} bits: mid-rise uniform quantization on the interval [-1,1],
+compute MSE, SQNR (dB), and error histogram.
+"""
+
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def uniform_quantize(x, B):
+    """
+    Mid-rise uniform quantization with 2^B levels on [-1, 1].
+    Output: xq (reconstructed signal) and idx (integer index of each sample: 0..2^B-1)
+    """
+    L = 2 ** B
+    step = 2.0 / L
+    # Level index: floor((x+1)/step) with clip to allowed range
+    idx = np.floor((x + 1.0) / step).astype(np.int64)
+    idx = np.clip(idx, 0, L - 1)
+    # Reconstructed value = center of the level
+    xq = -1.0 + (idx + 0.5) * step
+    return xq, idx
+
+
+def sqnr_db(x, xq):
+    Px = np.mean(x ** 2)
+    Pe = np.mean((x - xq) ** 2)
+    mse = Pe
+    sqnr = 10 * np.log10(Px / Pe) if Pe > 0 else np.inf
+    return mse, sqnr
+
+
+def run_uniform_report(x, fs, out_prefix=BASE_DIR):
+    os.makedirs(f"{out_prefix}/figs", exist_ok=True)
+    os.makedirs(f"{out_prefix}/outputs", exist_ok=True)
+    Bs = [8, 4, 2]
+    results = {}
+    for B in Bs:
+        xq, idx = uniform_quantize(x, B)
+        mse, sqnr = sqnr_db(x, xq)
+        e = x - xq
+        results[B] = dict(xq=xq, idx=idx, mse=mse, sqnr=sqnr, err=e)
+
+        # Error histogram
+        plt.figure(figsize=(6, 4))
+        plt.hist(e, bins=50, color="steelblue", edgecolor="k", alpha=0.8)
+        plt.title(f"Uniform Quantization Error Histogram (B={B} bits)\n"
+                  f"MSE={mse:.3e}, SQNR={sqnr:.2f} dB")
+        plt.xlabel("e[n] = x[n] - x̂[n]")
+        plt.ylabel("Number of samples")
+        plt.tight_layout()
+        plt.savefig(f"{out_prefix}/figs/s2_hist_B{B}.png", dpi=130)
+        plt.close()
+
+        # Save reconstructed audio file
+        from s1_signal import save_wav_float
+        save_wav_float(f"{out_prefix}/outputs/s2_uniform_B{B}.wav", xq, fs)
+
+    return results
+
+
+if __name__ == "__main__":
+    from s1_signal import make_synthetic_speech_like
+    x, fs = make_synthetic_speech_like()
+    res = run_uniform_report(x, fs)
+    print(f"{'B':>3} | {'MSE':>12} | {'SQNR(dB)':>10}")
+    for B, r in res.items():
+        print(f"{B:>3} | {r['mse']:.4e} | {r['sqnr']:>10.2f}")
