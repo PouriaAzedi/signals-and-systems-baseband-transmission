@@ -1,8 +1,11 @@
-"""
+
 ----------------------> Pouria Azedi
+
 --------------> 403249052
+
 -------> Signal And Systems Project - Phase 1
-"""
+
+
 
 import os
 import numpy as np
