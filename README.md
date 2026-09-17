@@ -433,8 +433,11 @@ The bitstream generated in this phase can serve as the input to the modulation a
 ## 🎓 Academic Context
 
 **Course:** Signals & Systems
+
 **Program:** Electrical Engineering
+
 **Semester:** 4th Semester
+
 **Programming Language:** Python
 
 ---
@@ -444,6 +447,7 @@ The bitstream generated in this phase can serve as the input to the modulation a
 **Pouria Azedi**
 
 Electrical Engineering Student
+
 Shahid Beheshti University
 
 ---
